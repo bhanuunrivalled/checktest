@@ -8,9 +8,12 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.xdebugger.XDebugSession;
 import com.intellij.xdebugger.XDebugSessionListener;
+import com.intellij.xdebugger.frame.XStackFrame;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class TraceExecutionTestCase extends DebuggerTestCase {
@@ -20,7 +23,8 @@ public class TraceExecutionTestCase extends DebuggerTestCase {
 
     @Override
     protected OutputChecker initOutputChecker() {
-        return null;
+        OutputChecker outputChecker = new OutputChecker(this::getTestAppPath, this::getAppOutputPath);
+        return outputChecker;
     }
 
     // this does not work also
@@ -29,10 +33,6 @@ public class TraceExecutionTestCase extends DebuggerTestCase {
         return new File("testData").getAbsolutePath();
     }
     // this does not work
-/*    @Override
-    protected String getTestAppPath() {
-        return "testData";
-    }*/
 
     protected void doTest(boolean isResultNull) {
         try {
@@ -47,6 +47,7 @@ public class TraceExecutionTestCase extends DebuggerTestCase {
     private void doTestImpl(boolean isResultNull, @NotNull String className)
             throws ExecutionException {
         LOG.info("Test started: " + getTestName(false));
+        final AtomicBoolean completed = new AtomicBoolean(false);
         createLocalProcess(className);
         final XDebugSession session = getDebuggerSession().getXDebugSession();
         assertNotNull(session);
@@ -54,20 +55,27 @@ public class TraceExecutionTestCase extends DebuggerTestCase {
         session.addSessionListener(new XDebugSessionListener() {
             @Override
             public void sessionPaused() {
+                if (completed.getAndSet(true)) {
+                    LOG.info("session resuming ");
+                    resume();
+                    return;
+                }
                 try {
-                    sessionPausedImpl();
+                    final XStackFrame currentStackFrame = session.getCurrentStackFrame();
+                    Objects.requireNonNull(currentStackFrame, "Stack frame unexpectedly was null.");
+                    LOG.info("session paused "  + currentStackFrame);
+                    final TestCompositeNode nodeVisualizer = new TestCompositeNode();
+                    // Happens in a different thread!
+
+                    currentStackFrame.computeChildren(nodeVisualizer);
+                    //sessionPausedImpl();
+                    resume();
                 } catch (Throwable t) {
                     println("Exception caught: " + t + ", " + t.getMessage(), ProcessOutputTypes.SYSTEM);
-
                     //noinspection CallToPrintStackTrace
                     t.printStackTrace();
-
                     resume();
                 }
-            }
-
-            private void sessionPausedImpl() {
-                printContext(getDebugProcess().getDebuggerContext());
             }
 
             private void resume() {
